@@ -1,8 +1,7 @@
 # DolceGusto_Mate
 A control mate for DolceGusto coffee machine
 
-![Uploading 2025-05-07_25a6f992bdf618.jpg…]()
-
+![2025-05-07_25a6f992bdf618](https://github.com/user-attachments/assets/e2ddd9d1-315b-4cb4-990e-3af1cc4e6067)
 
 # History
 I have a DolceGusto machine, how ever the selection of capsules was limited, so I decided to convert my capsule coffee machine into an espresso machine. That’s how this project started — I disassembled a Nespresso machine, kept most of its original parts, and added a 58mm brew group along with a ESP32 control module.
