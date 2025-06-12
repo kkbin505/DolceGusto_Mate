@@ -1,6 +1,7 @@
 # DolceGusto_Mate
 A control mate for DolceGusto coffee machine
 
+![Uploading 2025-05-07_25a6f992bdf618.jpg…]()
 
 
 # History
