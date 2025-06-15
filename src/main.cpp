@@ -44,14 +44,26 @@ bool outputState = false;     // 输出状态
 unsigned long outputStartTime = 0;  // 输出开始时间
 unsigned long OUTPUT_DURATION = 30000;  // 输出持续时间(30秒)
 
+// 加入待机时间显示功能
+enum UiMode {
+  UI_ACTIVE,    // 显示完整界面（工作中）
+  UI_STANDBY    // 显示大时间（待机）
+};
+UiMode currentUiMode = UI_ACTIVE;
+
+bool justWokeUp = false;  // 标志：刚从待机唤醒
+
+unsigned long lastActivityTime = 0;
+const unsigned long standbyTimeout = 600000;  // 60秒无操作进入待机
+
 /***************************
  * Begin Settings
  **************************/
 
 // WIFI
 const char* ESP_HOST_NAME = "ESP-32 C3"; //AMA
-const char* WIFI_SSID = "HUAWEI-CRLZ2L"; // 改为你的实际WiFi
-const char* WIFI_PWD = "60827012";
+const char* WIFI_SSID = "xxx"; // 改为你的实际WiFi名称和密码
+const char* WIFI_PWD = "xxx";
 
 // 中国上海时区设置
 // const char* ntpServer = "pool.ntp.org";       // 国际公共
@@ -146,6 +158,100 @@ String getWiFiStatusString(wl_status_t status) {
   }
 }
 
+
+
+// End of Setup ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// 加键处理（长按可连续加，需消抖）
+void handleAdd() {
+  if (timerEnable) {
+    OUTPUT_DURATION -= 1000;       // 减 1 秒（最小 1 秒）
+    if (OUTPUT_DURATION < 1000) {  // 防止负数
+      OUTPUT_DURATION = 1000;
+    }
+  }
+}
+
+// 减键处理（长按可连续减，需消抖）
+void handleSub() {
+  if (timerEnable) {
+    OUTPUT_DURATION += 1000;       // 加 1 秒
+  }
+}
+
+// 开关键处理（启停定时器）
+void handleSwitch(bool autoOff = false) {
+  // 如果当前是待机状态，先唤醒 UI，不启用计时
+  if (currentUiMode == UI_STANDBY) {
+    currentUiMode = UI_ACTIVE;
+    lastActivityTime = millis();  // 重置活动时间
+    justWokeUp = true;
+    Serial.println("🌞 Woke up from standby.");
+    return;
+  }
+
+  // 如果刚唤醒，忽略这次按键（防止误触）
+  if (justWokeUp) {
+    justWokeUp = false;  // 清除标志，下次按键才执行正常逻辑
+    Serial.println("⏰ Wake-up confirmed, waiting for next press...");
+    return;
+  }
+
+  // 启停定时器
+  timerEnable = !timerEnable;
+
+  if (!timerEnable) {
+    timerCount = 0;
+  }
+
+  outputState = timerEnable;
+  digitalWrite(SWITCH_MOS, outputState);
+
+  if (autoOff) {
+    Serial.println("⚠️ Output turned OFF after timeout.");
+  } else {
+    Serial.println(timerEnable ? "▶️ Timer started" : "⏹ Timer stopped");
+  }
+
+}
+
+void updateDisplay() {
+  display.clear();
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+
+  if (currentUiMode == UI_ACTIVE) {
+    display.setFont(ArialMT_Plain_10);  // 小字体
+
+    display.drawString(64, 4,  "DolceGusto Mate");
+    display.drawString(64, 20, "Count: " + String(timerCount) + "s");
+
+    char stateText[20];
+    sprintf(stateText, "State: %s", timerEnable ? "RUN" : "STOP");
+    display.drawString(64, 36, stateText);
+
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo)) {
+      char timeStr[16];
+      strftime(timeStr, sizeof(timeStr), "%H:%M:%S", &timeinfo);
+      display.drawString(64, 52, timeStr);
+    } else {
+      display.drawString(64, 52, "Time Error");
+    }
+  } else if (currentUiMode == UI_STANDBY) {
+    display.setFont(ArialMT_Plain_24);  // 大字体
+
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo)) {
+      char timeStr[16];
+      strftime(timeStr, sizeof(timeStr), "%H:%M:%S", &timeinfo);
+      display.drawString(64, 20, timeStr);  // 居中显示
+    } else {
+      display.drawString(64, 20, "Time Err");
+    }
+  }
+
+  display.display();
+}
+
 void setup() {
   // 初始化串口（调试用）
   Serial.begin(115200);
@@ -157,7 +263,8 @@ void setup() {
   display.clear();
   display.setFont(ArialMT_Plain_10);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawString(64, 32, "Timer Demo");
+  display.drawString(64, 10, "DolceGusto Mate");
+  display.drawString(64, 30, "Connecting to WiFi");
   display.display();
 
   // 初始化按键（开启内部上拉）
@@ -171,25 +278,25 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PWD);
   WiFi.setSleep(false);
-  delay(10000);
+  delay(1000);
   Serial.print("Connecting to ");
   Serial.println(WIFI_SSID);
 
   int counter = 0;
-  while (WiFi.status() != WL_CONNECTED && counter <100) {
+  while (WiFi.status() != WL_CONNECTED && counter <30) {
     delay(500);
     //Serial.print(".");
     display.clear();
-    //display.drawString(64, 10, "Connecting to WiFi"); //commented out to avoid oled burn-in if wifi is not available
-    display.drawXbm(46, 30, 8, 8, counter % 3 == 0 ? activeSymbole : inactiveSymbole);
-    display.drawXbm(60, 30, 8, 8, counter % 3 == 1 ? activeSymbole : inactiveSymbole);
-    display.drawXbm(74, 30, 8, 8, counter % 3 == 2 ? activeSymbole : inactiveSymbole);
+    display.drawString(64, 10, "Connecting to WiFi"); //commented out to avoid oled burn-in if wifi is not available
+    display.drawXbm(46, 40, 8, 8, counter % 3 == 0 ? activeSymbole : inactiveSymbole);
+    display.drawXbm(60, 40, 8, 8, counter % 3 == 1 ? activeSymbole : inactiveSymbole);
+    display.drawXbm(74, 40, 8, 8, counter % 3 == 2 ? activeSymbole : inactiveSymbole);
     display.display();
 
     counter++;
   }
 
-    Serial.println();
+  Serial.println();
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("✅ Connected to WiFi!");
@@ -283,64 +390,23 @@ void setup() {
 
   updateData(&display);
     
-  ArduinoOTA.begin();     // enable to receive update/uploade firmware via Wifi OTA
-}
-
-// End of Setup ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-// 加键处理（长按可连续加，需消抖）
-void handleAdd() {
-  if (timerEnable) {
-    OUTPUT_DURATION -= 1000;       // 减 1 秒（最小 1 秒）
-    if (OUTPUT_DURATION < 1000) {  // 防止负数
-      OUTPUT_DURATION = 1000;
-    }
-  }
-}
-
-// 减键处理（长按可连续减，需消抖）
-void handleSub() {
-  if (timerEnable) {
-    OUTPUT_DURATION += 1000;       // 加 1 秒
-  }
-}
-
-// 开关键处理（启停定时器）
-void handleSw() {
-  timerEnable = !timerEnable;
-  if (!timerEnable) {            // 停止时清零计时
-    timerCount = 0;
-  }
-  outputState = !outputState;
-  digitalWrite(SWITCH_MOS, outputState);
-}
-
-// 控制输出的函数
-void handleOutput() {
-  // outputState = false;
-  handleSw();
-  digitalWrite(SWITCH_MOS, outputState);
-  Serial.println("Output turned OFF after 30 seconds");
-  // timerEnable = !timerEnable;
+  // ArduinoOTA.begin();     // enable to receive update/uploade firmware via Wifi OTA
 }
 
 void loop() {
 
-  // ArduinoOTA.handle();          // listen for update OTA request from clients 
-  // 轮询按键（消抖处理）
-  if (digitalRead(BUTTON_ADD) == LOW) {
-    delay(50);                    // 消抖
-    while (digitalRead(BUTTON_ADD) == LOW); // 等待松开
-    handleAdd();
+  unsigned long now = millis();
+  // 判断是否应该进入待机
+  if (currentUiMode == UI_ACTIVE && (now - lastActivityTime > standbyTimeout)) {
+    currentUiMode = UI_STANDBY;
   }
-  if (digitalRead(BUTTON_SUB) == LOW) {
-    delay(50);
-    while (digitalRead(BUTTON_SUB) == LOW);
-    handleSub();
-  }
+  // currentUiMode = UI_STANDBY;
+
+
   if (digitalRead(BUTTON_SW) == LOW) {
     delay(50);
     while (digitalRead(BUTTON_SW) == LOW);
-    handleSw();
+    handleSwitch(); // 手动按键启停
   }
 
   // 软件定时器逻辑（秒级精度）
@@ -356,35 +422,14 @@ void loop() {
     // 检查输出是否需要关闭（30秒后）
   Serial.println(timerCount);
   if (outputState && (timerCount * 1000 >= OUTPUT_DURATION)) {
-    handleOutput();
+    handleSwitch(true); // 超时自动关闭，带日志
+
   }
-
-  // OLED 显示更新
-  display.clear();
-  display.drawString(64, 0, "DolceGusto Mate" );
-  display.drawString(64, 20, "Count: " + String(timerCount) + "s");
-  char stateText[20];
-  sprintf(stateText, "State: %s", timerEnable ? "RUN" : "STOP");
-  display.drawString(64, 36, stateText); 
-  // ⏰ 在底部添加当前时间（行高一般为 10 或 12 像素，位置选在 y=56 比较安全）
-  time_t now = time(nullptr);
-  struct tm timeinfo;
-  localtime_r(&now, &timeinfo);
-  char timeStr[16];
-  strftime(timeStr, sizeof(timeStr), "%H:%M:%S", &timeinfo);
-  // display.drawString(64, 50, timeStr); // 加在最底下一行
-  // display.drawString(64,50,"WiFi status: " + String(WiFi.status()));
-  //struct tm timeinfo;
-  if (getLocalTime(&timeinfo)) {
-    char timeStr[16];
-    strftime(timeStr, sizeof(timeStr), "%H:%M:%S", &timeinfo);  // 只显示时间
-    display.drawString(64, 52, timeStr);
-  } else {
-    display.drawString(64, 52, "Time Error");
-  }
+ 
 
 
-  display.display();
+  // display.display();
+  updateDisplay();
 
   delay(100); // 主循环延时，降低功耗
 
@@ -392,25 +437,6 @@ void loop() {
   Serial.println("Local IP: " + WiFi.localIP().toString());
   Serial.println("DNS: " + WiFi.dnsIP().toString());
   printLocalTime();
-
-  // if (millis() - timeSinceLastWUpdate > (1000L*UPDATE_INTERVAL_SECS)) {
-  //   setReadyForWeatherUpdate();
-  //   timeSinceLastWUpdate = millis();
-  // }
-
-  // if (readyForWeatherUpdate && ui.getUiState()->frameState == FIXED) {
-  //   updateData(&display); //gets weather data from openweathermap site, this takes ca. 3 seconds
-  //   delay(0); //give CPU time to the Wi-Fi/TCP stacks, https://tttapa.github.io/ESP8266/Chap04%20-%20Microcontroller.html
-  // }
-
-  // int remainingTimeBudget = ui.update();
-
-  // if (remainingTimeBudget > 0) {
-  //   // You can do some work here
-  //   // Don't do stuff if you are below your
-  //   // time budget.
-  //   delay(remainingTimeBudget);
-  // }
 
 }
 
@@ -513,12 +539,6 @@ void drawHourly2(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int
   drawHeaderOverlay1(display, state, x, y); //footer string
 }
 
-/*void drawHourly3(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y) {
-  drawHourlyDetails(display, x,      y, 8);
-  drawHourlyDetails(display, x + 32, y, 9);
-  drawHourlyDetails(display, x + 64, y, 10); 
-  drawHourlyDetails(display, x + 96, y, 11); 
-}*/
 
 /*******************************************/
 // Daily Forecast Details
@@ -653,54 +673,7 @@ void drawCurrentDetails(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t
   //drawHeaderOverlay1(display, state, x, y); //footer string
 }
 
-/*void drawHeaderOverlay(OLEDDisplay *display, OLEDDisplayUiState* state) {
-  time_t now = time(nullptr);
-  struct tm* timeInfo;
-  timeInfo = localtime(&now);
-  char buff[25];
 
-  display->setColor(WHITE);
-  display->setFont(ArialMT_Plain_10);
-
-  //if (state->currentFrame%2==0) //then even number, else - odd number
-  if (!(state->currentFrame%2 == 0)) //inverted
-  {
-    
-  display->setTextAlignment(TEXT_ALIGN_LEFT);
-  sprintf_P(buff, PSTR("%02d:%02d:%02d"), timeInfo->tm_hour, timeInfo->tm_min, timeInfo->tm_sec);
-  ///sprintf_P(buff, PSTR("%02d:%02d:%02d   %02d.%02d.%04d"), timeInfo->tm_hour, timeInfo->tm_min, timeInfo->tm_sec, timeInfo->tm_mday, timeInfo->tm_mon+1, timeInfo->tm_year + 1900);
-  display->drawString(0, 54, String(buff));
-
-  display->setTextAlignment(TEXT_ALIGN_CENTER);
-  //sprintf_P(buff, PSTR("%02d.%02d.%04d"), timeInfo->tm_mday, timeInfo->tm_mon+1, timeInfo->tm_year + 1900);
-  //display->drawString(64, 54, String(buff));
-//  String temp = String(openWeatherMapOneCallData.current.temp, 0) + "°"; //+ (IS_METRIC ? "°C" : "°F");
-//  display->drawString(56, 54, temp);
-  //sprintf_P(buff, PSTR("%s %02d.%02d.%04d"), WDAY_NAMES[timeInfo->tm_wday].c_str(), timeInfo->tm_mday, timeInfo->tm_mon+1, timeInfo->tm_year + 1900);
-  display->drawString(58, 54, WDAY_NAMES[timeInfo->tm_wday].c_str());
-  
-  display->setTextAlignment(TEXT_ALIGN_RIGHT);
-  //String temp = String(currentWeather.temp, 1) + (IS_METRIC ? "°C" : "°F");
-  //String temp = String(openWeatherMapOneCallData.current.temp, 0) + "°"; //+ (IS_METRIC ? "°C" : "°F");
-  //display->drawString(128, 54, temp);
-  sprintf_P(buff, PSTR("%02d.%02d.%04d"), timeInfo->tm_mday, timeInfo->tm_mon+1, timeInfo->tm_year + 1900);
-  display->drawString(128, 54, String(buff));
-  
-  }
-  else 
-  {
-    
-  display->setTextAlignment(TEXT_ALIGN_LEFT);
-  //String temp = String(openWeatherMapOneCallData.current.temp, 0) + "°  " + openWeatherMapOneCallData.current.weatherDescription;
-  String temp = String(openWeatherMapOneCallData.current.temp, 1) + "°";
-  display->drawString(0, 54, temp);
-
-  display->setTextAlignment(TEXT_ALIGN_RIGHT);
-  display->drawString(128, 52, openWeatherMapOneCallData.current.weatherDescription); //54 low case text needs two pixels below the line
-    
-  }
-  //display->drawHorizontalLine(0, 52, 128); //(0, 52, 128)
-}*/
 
 void drawHeaderOverlay1(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y) {
   time_t now = time(nullptr);
