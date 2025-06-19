@@ -20,7 +20,7 @@
 // Display Settings
 const int I2C_DISPLAY_ADDRESS = 0x3c;
 
-String OPEN_WEATHER_MAP_APP_ID = "20ae8ba1ef22a8c51425d540ea46e676"; //https://home.openweathermap.org/api_keys
+String OPEN_WEATHER_MAP_APP_ID = "xxx"; //https://home.openweathermap.org/api_keys
 
 
 // OLED 配置（I2C 地址 0x3C 常用）
