@@ -158,9 +158,6 @@ String getWiFiStatusString(wl_status_t status) {
   }
 }
 
-
-
-// End of Setup ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // 加键处理（长按可连续加，需消抖）
 void handleAdd() {
   if (timerEnable) {
@@ -180,10 +177,12 @@ void handleSub() {
 
 // 开关键处理（启停定时器）
 void handleSwitch(bool autoOff = false) {
+  unsigned long now = millis();
+
   // 如果当前是待机状态，先唤醒 UI，不启用计时
   if (currentUiMode == UI_STANDBY) {
     currentUiMode = UI_ACTIVE;
-    lastActivityTime = millis();  // 重置活动时间
+    lastActivityTime = now;
     justWokeUp = true;
     Serial.println("🌞 Woke up from standby.");
     return;
@@ -191,10 +190,13 @@ void handleSwitch(bool autoOff = false) {
 
   // 如果刚唤醒，忽略这次按键（防止误触）
   if (justWokeUp) {
-    justWokeUp = false;  // 清除标志，下次按键才执行正常逻辑
+    justWokeUp = false;  // 清除标志
     Serial.println("⏰ Wake-up confirmed, waiting for next press...");
     return;
   }
+
+  // ✅ 只在真正处理逻辑时，才更新时间
+  lastActivityTime = now;
 
   // 启停定时器
   timerEnable = !timerEnable;
@@ -211,8 +213,8 @@ void handleSwitch(bool autoOff = false) {
   } else {
     Serial.println(timerEnable ? "▶️ Timer started" : "⏹ Timer stopped");
   }
-
 }
+
 
 void updateDisplay() {
   display.clear();
@@ -222,19 +224,23 @@ void updateDisplay() {
     display.setFont(ArialMT_Plain_10);  // 小字体
 
     display.drawString(64, 4,  "DolceGusto Mate");
-    display.drawString(64, 20, "Count: " + String(timerCount) + "s");
+    display.drawString(64, 20, "Count down: " + String(OUTPUT_DURATION/1000-timerCount) + "s");
 
     char stateText[20];
     sprintf(stateText, "State: %s", timerEnable ? "RUN" : "STOP");
     display.drawString(64, 36, stateText);
 
     struct tm timeinfo;
-    if (getLocalTime(&timeinfo)) {
-      char timeStr[16];
-      strftime(timeStr, sizeof(timeStr), "%H:%M:%S", &timeinfo);
-      display.drawString(64, 52, timeStr);
-    } else {
-      display.drawString(64, 52, "Time Error");
+    if (WiFi.status() == WL_CONNECTED) {
+      if (getLocalTime(&timeinfo)) {
+        char timeStr[16];
+        strftime(timeStr, sizeof(timeStr), "%H:%M:%S", &timeinfo);
+        display.drawString(64, 52, timeStr);
+      } else {
+        display.drawString(64, 52, "Time Error");
+      }
+    }else{
+      display.drawString(64, 52, "Off Line");
     }
   } else if (currentUiMode == UI_STANDBY) {
     display.setFont(ArialMT_Plain_24);  // 大字体
@@ -251,6 +257,7 @@ void updateDisplay() {
 
   display.display();
 }
+
 
 void setup() {
   // 初始化串口（调试用）
@@ -292,7 +299,6 @@ void setup() {
     display.drawXbm(60, 40, 8, 8, counter % 3 == 1 ? activeSymbole : inactiveSymbole);
     display.drawXbm(74, 40, 8, 8, counter % 3 == 2 ? activeSymbole : inactiveSymbole);
     display.display();
-
     counter++;
   }
 
@@ -318,9 +324,16 @@ void setup() {
   struct tm timeinfo;
   int retry = 0;
   const int retry_count = 20;
-  while (!getLocalTime(&timeinfo) && retry < retry_count) {
+  setenv("TZ", "CST-8", 1);          // Zeitzone MEZ setzen //https://www.mikrocontroller.net/topic/479624
+  while (!getLocalTime(&timeinfo) && retry < retry_count && !time(nullptr)) {
     Serial.print(".");
-    delay(1000);
+    display.clear();
+    display.drawString(64, 10, "Connecting to WiFi"); //commented out to avoid oled burn-in if wifi is not available
+    display.drawXbm(46, 40, 8, 8, counter % 3 == 0 ? activeSymbole : inactiveSymbole);
+    display.drawXbm(60, 40, 8, 8, counter % 3 == 1 ? activeSymbole : inactiveSymbole);
+    display.drawXbm(74, 40, 8, 8, counter % 3 == 2 ? activeSymbole : inactiveSymbole);
+    display.display();
+    delay(500);
     retry++;
   }
   Serial.println();
@@ -330,27 +343,19 @@ void setup() {
     Serial.println(&timeinfo, "🕒 当前时间：%Y-%m-%d %H:%M:%S");
   } else {
     Serial.println("❌ 时间同步失败");
-  // 尝试备用NTP服务器
-      configTime(gmtOffset_sec, daylightOffset_sec, "ntp1.aliyun.com", "ntp2.aliyun.com", "pool.ntp.org");
-      retry = 0;
-      while (!getLocalTime(&timeinfo) && retry < retry_count) {
-        Serial.print(".");
-        delay(1000);
-        retry++;
-      }
     }
 
-  setenv("TZ", "CST-8", 1);          // Zeitzone MEZ setzen //https://www.mikrocontroller.net/topic/479624
-  while (!time(nullptr)) // vorsichtshalber auf die Initialisierund der Lib warten
-  {
-    //Serial.print(".");
-    //display.clear();
-    //display.drawString(64, 10, "Getting time");
-    //display.display();
-    delay(500);
-  }
+ 
+  // while (!time(nullptr)) // vorsichtshalber auf die Initialisierund der Lib warten
+  // {
+  //   //Serial.print(".");
+  //   //display.clear();
+  //   //display.drawString(64, 10, "Getting time");
+  //   //display.display();
+  //   delay(500);
+  // }
   //Serial.println("OK");
-  delay(1000); // Es kann einen Moment dauern, bis man die erste NTP-Zeit hat, solange bekommt man noch eine ungültige Zeit
+  delay(500); // Es kann einen Moment dauern, bis man die erste NTP-Zeit hat, solange bekommt man noch eine ungültige Zeit
   
   ///ui.setTargetFPS(30);
   ui.setTargetFPS(1); // updates display every second to show seconds counting
@@ -433,10 +438,15 @@ void loop() {
 
   delay(100); // 主循环延时，降低功耗
 
-  Serial.println("WiFi status: " + String(WiFi.status()));
+  if (WiFi.status() == WL_CONNECTED) {
+  Serial.println("WiFi status: CONNECTED");
   Serial.println("Local IP: " + WiFi.localIP().toString());
   Serial.println("DNS: " + WiFi.dnsIP().toString());
-  printLocalTime();
+  printLocalTime();  // ✅ 仅在 WiFi 连接成功时调用
+} else {
+  Serial.println("WiFi status: NOT CONNECTED");
+}
+
 
 }
 
